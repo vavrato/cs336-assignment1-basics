@@ -18,6 +18,9 @@ dependencies = [
     "torch~=2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'", # Intel Macs
     "tqdm>=4.67.1",
     "wandb>=0.19.7",
+    "ipykernel>=6.29.5",
+    "types-tqdm>=4.67.0.20250516",
+    "types-regex>=2024.11.6.20250403",
 ]
 
 

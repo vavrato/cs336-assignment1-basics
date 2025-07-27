@@ -1,166 +1,121 @@
-import os
-from typing import Dict, Iterable, Iterator, List, Tuple
+from typing import Any, Iterator,Optional
 import regex as re
 from tqdm import tqdm
+#from pretokenization_example import find_chunk_boundaries
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
-def pretokenize(text: str) -> Iterator[str]:
-    return re.finditer(PAT, text)
+class MyTokenizer:
+    merges: list[tuple[bytes, bytes]]
+    vocabulary: dict[int, tuple[bytes,...]]
+    words_counts_dict = dict[tuple[bytes, ...], int]
+    pairs_counts_dict = dict[tuple[bytes, ...], int]
 
-def create_pretoken_count_dict(pretokens: Iterable[...]) -> Dict[Tuple[bytes], int]: # type: ignore
-    tuples = {}
-    for pretoken in pretokens:
-        pretoken = pretoken.group()
-        blist = [bytes([byte]) for byte in pretoken.encode()]
-        t = tuple(blist)
-        if t not in tuples:
-            tuples[t] = 1
-        else:
-            tuples[t] += 1
+    def train(self, text, special_tokens, vocab_size: int) -> tuple[dict[int, tuple[bytes,...]], list[tuple[bytes, bytes]]]:
+        words_counts_dict, pairs_counts_dict = self.make_counts_dicts(text, special_tokens)
+        
+        vocab = [bytes([i]) for i in range(256)] + [token.encode() for token in special_tokens]
+        merges = []
 
-    return tuples
+        n_steps = vocab_size - len(vocab)
 
+        for i in range(n_steps):
+            # do naive implementation first
+            # merge the words, make it into new word counts and completely new pairs counts
+            max_pair = self._get_maximal_token_pair(pairs_counts_dict)
+            merges.append(max_pair)
+            vocab.append(b''.join(max_pair))
 
-def count_pairs(tuples_cnt_dict: Dict[Tuple, int]) -> Dict[Tuple, int]:
-    pairs = {}
+            new_words_counts_dict: dict = {}
+            for old_word, cnt in words_counts_dict.items():
+                new_word = self._merge_tokens(old_word, max_pair)
+                new_words_counts_dict[new_word] = cnt
 
-    for tuple in tuples_cnt_dict:
-        for d in zip(tuple, tuple[1:]):
-            if d not in pairs:
-                pairs[d] = tuples_cnt_dict[tuple]
-            else:
-                pairs[d] += tuples_cnt_dict[tuple]
+            words_counts_dict = new_words_counts_dict
+            pairs_counts_dict = self._make_pairs_count_dict(words_counts_dict)
 
-    return pairs
+        vocab_dict = {i: token for i, token in enumerate(vocab)}
 
-def get_maximal_token_pair(tuples: Dict[Tuple, int]) -> Dict[Tuple, int]:
-    pairs = count_pairs(tuples)
+        return vocab_dict, merges
 
-    m = max([v for _, v in pairs.items()])
-    maximal_token_pair = max([k for k,v in pairs.items() if v == m])
+    def make_counts_dicts(
+            self, 
+            text, 
+            special_tokens = Optional[list[str]]
+            ) -> tuple[dict[tuple[bytes,...], int], dict[tuple[bytes, bytes], int]]:
+        splits: list[str] = self._split_on_special_tokens(text, special_tokens)
+        
+        words_counts_dict_list: list[dict] = []
+        for sentence in splits:
+            pretokens: Iterator = self._pretokenize(sentence)
+            words_counts_dict_list.append(self._make_word_cnt_dict(pretokens))
 
-    return maximal_token_pair
+        words_counts_dict = self._merge_counts_dicts(words_counts_dict_list)
 
-def _merge_tokens_in_tuple(t: Tuple[bytes], token_pair: Tuple[bytes]) -> Tuple[bytes]:
-    new_token = (b'').join(token_pair)
+        pairs_counts_dict = self._make_pairs_count_dict(words_counts_dict)
 
-    new_t = []
+        return words_counts_dict, pairs_counts_dict
 
-    pos = 0
-    while pos <= len(t)-1:
-        if pos == (len(t)-1): # no pair to be taken, we are at the end
-            new_t.append(t[pos])
-            break
-
-        if (t[pos], t[pos+1]) == token_pair:
-            new_t.append(new_token)
-            pos+=2
-
-        else:
-            new_t.append(t[pos])
-            pos+=1
-
-    return tuple(new_t)
-
-def merge_tokens_in_count_dict(tuples: Dict[Tuple[bytes], int], token_pair: Tuple[bytes]):
-    return {_merge_tokens_in_tuple(t, token_pair) : count for t,count in tuples.items() }
-
-def merge_count_dicts(dicts: Iterable[Dict[Tuple[bytes], int]]):
-    final_dict = {}
-    for dict in dicts:
-        for key, value in dict.items():
-            if key in final_dict:
-                final_dict[key] += value
-            else:
-                final_dict[key] = value
-
-    return final_dict
-
-def naive_tokenizer(
-    text: str,
-    vocab_size: int,
-    special_tokens: list[str],
-    use_tqdm: bool = False,
-    **kwargs,
-) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-    """Given the path to an input corpus, run train a BPE tokenizer and
-    output its vocabulary and merges.
-
-    Args:
-        input_path (str | os.PathLike): Path to BPE tokenizer training data.
-        vocab_size (int): Total number of items in the tokenizer's vocabulary (including special tokens).
-        special_tokens (list[str]): A list of string special tokens to be added to the tokenizer vocabulary.
-            These strings will never be split into multiple tokens, and will always be
-            kept as a single token. If these special tokens occur in the `input_path`,
-            they are treated as any other string.
-
-    Returns:
-        tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-            vocab:
-                The trained tokenizer vocabulary, a mapping from int (token ID in the vocabulary)
-                to bytes (token bytes)
-            merges:
-                BPE merges. Each list item is a tuple of bytes (<token1>, <token2>),
-                representing that <token1> was merged with <token2>.
-                Merges are ordered by order of creation.
-    """
-    vocab = [bytes([i]) for i in range(256)] + [token.encode() for token in special_tokens]
-
-    n_steps = vocab_size - len(vocab)
-
-    merges = []
-
-    if special_tokens:
+    def _split_on_special_tokens(self, text: str, special_tokens: list[str]) -> list[str]:
         special_tokens = [re.escape(token) for token in special_tokens]
         pattern = "|".join(special_tokens)
-
         chunks = re.split(pattern, text)
-    else:
-        chunks = [text]
 
-    chunks_pretokenized_count_dict = []
-    for chunk in chunks:
-        pretokens_iterator = pretokenize(chunk)
-        count_dict = create_pretoken_count_dict(pretokens_iterator)
-        chunks_pretokenized_count_dict.append(count_dict)
-
-    count_dict = merge_count_dicts(chunks_pretokenized_count_dict)
-
-    for _ in tqdm(range(n_steps), disable = not use_tqdm):
-        pairs = count_pairs(count_dict)
-        maximal_token_pair = get_maximal_token_pair(pairs)
-
-        merges.append(maximal_token_pair)
-        vocab.append((b'').join(maximal_token_pair))
-
-        count_dict = merge_tokens_in_count_dict(count_dict, maximal_token_pair)
-
-    vocab = {i: token for i, token in enumerate(vocab)}
-
-    return vocab, merges
-
-
-if __name__ == '__main__':
+        return chunks
     
-    text = '''low low low low low lower lower<|special|> widest widest widest newest newest<|special|> newest newest newest newest'''
-    a, b = (naive_tokenizer(text, 269, ["<|special|>"]))
-    print(a)
-    print(b)
-    # pretokens=re.findall(PAT, text)
+    def _pretokenize(self, text: str) -> Iterator[re.Match[str]]:
+        return re.finditer(PAT, text)
 
-    # pretokens = [pretoken.strip() for pretoken in pretokens]
-    # tokens = ['<|endoftext|>'.encode()] + [chr(i) for i in range(256)]
+    def _make_word_cnt_dict(self, words: Iterator[re.Match[str]]) -> dict[tuple[bytes,...], int]:
+        words_counts_dict: dict[tuple[bytes,...], int] = {}
+        for word_match in words:
+            word = word_match.group()
+            word_as_byte_list = [bytes([byte]) for byte in word.encode()]
+            word_as_byte_tuple = tuple(word_as_byte_list)
+            words_counts_dict[word_as_byte_tuple] = 1 + words_counts_dict.get(word_as_byte_tuple, 0)
 
-    # # inicialize tuples as pretokens tokenized to byte level
-    # tuples = {}
-    # add_pretokens(pretokens, tuples)
+        return words_counts_dict
 
-    # for _ in range(6):
-    #     pairs = count_pairs(tuples)
-    #     max_token_pair = get_maximal_token_pair(tuples)
-    #     tokens.append((b'').join(max_token_pair))
+    def _merge_counts_dicts(self, dicts: list[dict[Any, int]]) -> dict[Any, int]:
+        merged_dict: dict[Any, int] = {}
+        for cnt_dict in dicts:
+            for k, v in cnt_dict.items():
+                merged_dict[k] = v + merged_dict.get(k, 0)
 
-    #     tuples = merge_tokens(tuples, max_token_pair)
+        return merged_dict
     
-    # print(tokens)
+    def _make_pairs_count_dict(self, words_count_dict: dict[tuple[bytes, ...], int]):
+        '''creates the dictionary with count of pairs of tokens'''
+        pairs_count_dict: dict[tuple[bytes, bytes], int] = {}
+        for word, word_count in words_count_dict.items():
+            for pair in zip(word, word[1:]):
+                pairs_count_dict[pair] = word_count + pairs_count_dict.get(pair, 0)
+
+        return pairs_count_dict
+    
+    @staticmethod
+    def _get_maximal_token_pair(pairs_counts_dict: dict[tuple, int]) -> tuple[bytes, bytes]:
+        maximal_token_pair, _ = max(pairs_counts_dict.items(), key=lambda item: (item[1], item[0]))
+
+        return maximal_token_pair
+    
+    @staticmethod
+    def _merge_tokens(word: tuple[bytes, ...], pair: tuple[bytes, bytes]) -> tuple[bytes,...]:
+        new_token = b''.join(pair)
+        new_word = []
+        l = len(word)
+
+        i=0
+        while i < l-1:
+            if (word[i] == pair[0]) and (word[i+1] == pair[1]):
+                new_word.append(new_token)
+                i+=2
+            else:
+                new_word.append(word[i])
+                i+=1
+
+        if i == l-1:
+            new_word.append(word[i])
+
+        return tuple(new_word)
+
