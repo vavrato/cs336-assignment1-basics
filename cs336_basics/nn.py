@@ -2,7 +2,7 @@ from typing import Optional
 from torch import nn
 import torch
 import math
-from einops import rearrange, reduce
+from einops import rearrange, reduce, repeat
 
 
 class Linear(nn.Module):
@@ -89,7 +89,7 @@ class FFN_SwiGLU(nn.Module):
         self,
         d_model: int,
         d_ff: Optional[int] = None,
-        device: torch.device | None = None,  # type: ignore
+        device: torch.device | None = None, # type: ignore
         dtype: torch.dtype | None = None,  # type: ignore
     ):
         super().__init__()
@@ -122,3 +122,58 @@ def ffn_swiglu(x: torch.Tensor, W1: torch.Tensor, W2: torch.Tensor, W3: torch.Te
     b = x @ W3.T
 
     return (a * b) @ W2.T
+
+class ROPE(nn.Module):
+    # it would be nice to refactor, clean, and make more efficient
+    # no time, though, two kids and fulltime job
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device: Optional[torch.device]=None) -> None:
+        super().__init__()
+
+        self.theta = theta
+        self.d_k = d_k
+        self.theta_base = theta**(-2/d_k)
+        t = self.make_angle_tensor(max_seq_len, d_k)
+
+        cos = torch.cos(t)
+        sin = torch.sin(t)
+
+        self.register_buffer('cos', cos)
+        self.register_buffer('sin', sin)
+
+    def theta_i(self, i):
+        return self.theta_base**(i)
+
+    def make_angle_vector(self, d_k) -> torch.Tensor:
+        vector_list = []
+        for k in range(0,d_k//2):
+            vector_list.append(self.theta_i(k))
+            
+        vector = torch.tensor(vector_list).reshape(1,-1)
+        return repeat(vector, 'a b -> a (b n)', n=2)
+    
+    def make_angle_tensor(self, max_seq_len, d_k) -> torch.Tensor:
+        rows = []
+        angle_vector = self.make_angle_vector(d_k)
+        for m in range(0,max_seq_len):
+            rows.append(m * angle_vector)
+
+        return torch.cat(rows)
+
+    def forward(self, x: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+        # first make the rearranged vector that will be multiplied by sin, I don't know if this can be more elegant
+        y = x.clone()
+
+        y[..., 0::2] = -x[..., 1::2]
+        y[..., 1::2] = x[..., 0::2]
+
+        cos_tensor = getattr(self, "cos")
+        sin = getattr(self, "sin")
+        return x * cos_tensor[positions, :] + y * sin[positions, :]
+
+def softmax(x: torch.Tensor, dim: int) -> torch.Tensor:
+
+    x_shifted = x - torch.max(x, dim).values
+    exp = torch.exp(x_shifted)
+    norm = exp.sum(dim)
+
+    return exp/norm
