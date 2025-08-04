@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, softmax
 
 from cs336_basics.naive_tokenizer import MyTokenizer, Tokenizer
-from cs336_basics.nn import ROPE, Embedding, FFN_SwiGLU, Linear, RMSNorm, Silu, silu, ffn_swiglu
+from cs336_basics.nn import ROPE, Embedding, FFN_SwiGLU, Linear, RMSNorm, Silu, sdpa, silu, ffn_swiglu
 
 
 
@@ -117,7 +117,7 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    raise NotImplementedError
+    return sdpa(Q,K,V,mask)
 
 
 def run_multihead_self_attention(
