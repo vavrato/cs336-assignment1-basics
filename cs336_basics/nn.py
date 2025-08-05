@@ -139,7 +139,7 @@ class ROPE(nn.Module):
         cos = torch.cos(t)
         sin = torch.sin(t)
 
-        self.register_buffer("cos", cos, persistent=False)  # persistent=False, otherwise problems with load_state_dict
+        self.register_buffer("cos", cos, persistent=False)  # persistent=False, otherwise problems with load_state_dict when this is a submodule
         self.register_buffer("sin", sin, persistent=False)
 
     def theta_i(self, i):
@@ -170,9 +170,7 @@ class ROPE(nn.Module):
 
         cos = getattr(self, "cos")[positions, :]
         sin = getattr(self, "sin")[positions, :]
-        for _ in range(y.ndim - 3):  # I do not understand at the moment why 3 works, as well as unsqueeze(1). WTF?
-            cos = cos.unsqueeze(0)
-            sin = sin.unsqueeze(0)
+
         return x * cos + y * sin
 
 
@@ -206,8 +204,8 @@ class MultiHeadAttention(nn.Module):
         num_heads: int,
         d_k: Optional[int] = None,
         d_v: Optional[int] = None,
-        use_rope: bool = False,
         max_seq_len: int = 1,
+        use_rope: bool = False,
         theta: float = 10000
     ):
         super().__init__()
@@ -270,12 +268,10 @@ class MultiHeadAttention(nn.Module):
             K = self.rope.forward(K, token_positions)
 
         seq_len = x.shape[-2]
-        mask = rearrange(torch.tril(torch.ones(seq_len, seq_len)).bool(), "s1 s2 -> 1 1 s1 s2")
+        mask = rearrange(torch.tril(torch.ones(seq_len, seq_len)).bool(), "s1 s2 -> 1 1 s1 s2") # causal mask
         attention = sdpa(Q, K, V, mask=mask)  # batch, num_heads, seq_len, d_k
         attention = rearrange(attention, "b h s d -> b s (h d)")  # this is the concatenation
 
-        return attention @ self.WO.T
+        # oof, this was hard
 
-if __name__ == '__main__':
-    mha = MultiHeadAttention(8, 4, 2, 2, True, 5)
-    mha.forward(torch.randn(3,5,8), token_positions=torch.tensor([0,1,2,3,4]))
+        return attention @ self.WO.T
