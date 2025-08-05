@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, softmax
 
 from cs336_basics.naive_tokenizer import MyTokenizer, Tokenizer
-from cs336_basics.nn import ROPE, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, sdpa, silu, ffn_swiglu
+from cs336_basics.nn import ROPE, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, TransformerBlock, sdpa, silu, ffn_swiglu
 
 
 
@@ -294,7 +294,22 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    tb = TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta)
+    tb.load_state_dict(
+        {
+            'mha.WQ': weights['attn.q_proj.weight'],
+            'mha.WK': weights['attn.k_proj.weight'],
+            'mha.WV':weights['attn.v_proj.weight'],
+            'mha.WO':weights['attn.output_proj.weight'],
+            'norm1.W': weights['ln1.weight'],
+            'norm2.W': weights['ln2.weight'],
+            'swiglu.W1': weights['ffn.w1.weight'],
+            'swiglu.W2': weights['ffn.w2.weight'],
+            'swiglu.W3': weights['ffn.w3.weight']
+        }
+    )
+
+    return tb.forward(in_features)
 
 
 def run_transformer_lm(

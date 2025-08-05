@@ -82,7 +82,7 @@ class Silu(nn.Module):
 
 
 def silu(x: torch.Tensor):
-    return x * nn.functional.sigmoid(x)
+    return x * torch.sigmoid(x)
 
 
 class FFN_SwiGLU(nn.Module):
@@ -139,7 +139,9 @@ class ROPE(nn.Module):
         cos = torch.cos(t)
         sin = torch.sin(t)
 
-        self.register_buffer("cos", cos, persistent=False)  # persistent=False, otherwise problems with load_state_dict when this is a submodule
+        self.register_buffer(
+            "cos", cos, persistent=False
+        )  # persistent=False, otherwise problems with load_state_dict when this is a submodule
         self.register_buffer("sin", sin, persistent=False)
 
     def theta_i(self, i):
@@ -161,15 +163,17 @@ class ROPE(nn.Module):
 
         return torch.cat(rows)
 
-    def forward(self, x: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, positions: Optional[torch.Tensor]) -> torch.Tensor:
         # first make the rearranged vector that will be multiplied by sin, I don't know if this can be more elegant
         y = x.clone()
 
         y[..., 0::2] = -x[..., 1::2]
         y[..., 1::2] = x[..., 0::2]
 
-        cos = getattr(self, "cos")[positions, :]
-        sin = getattr(self, "sin")[positions, :]
+        if positions is None:
+            positions = torch.arange(x.shape[-2])
+        cos = getattr(self, "cos")[positions, :]#.unsqueeze(1)  # unsqueeze when x.shape = [b, s, h, d]
+        sin = getattr(self, "sin")[positions, :]#.unsqueeze(1)
 
         return x * cos + y * sin
 
@@ -206,7 +210,7 @@ class MultiHeadAttention(nn.Module):
         d_v: Optional[int] = None,
         max_seq_len: int = 1,
         use_rope: bool = False,
-        theta: float = 10000
+        theta: float = 10000,
     ):
         super().__init__()
         self.num_heads = num_heads
@@ -215,24 +219,25 @@ class MultiHeadAttention(nn.Module):
         if not d_v:
             d_v = int(d_model / num_heads)
 
-
+        sigma_qk = math.sqrt(2 / (d_model + d_k))
+        sigma_v = math.sqrt(2 / (d_model + d_v))
         # I think this should be the correct init
         self.WQ = Linear(d_k * num_heads, d_model).W
-        nn.init.normal_(self.WQ, 0, 2 / (d_model + d_k))
+        nn.init.normal_(self.WQ, 0, sigma_qk)
 
         self.WK = Linear(d_k * num_heads, d_model).W
-        nn.init.normal_(self.WK, 0, 2 / (d_model + d_k))
+        nn.init.normal_(self.WK, 0, sigma_qk)
 
         self.WV = Linear(d_v * num_heads, d_model).W
-        nn.init.normal_(self.WV, 0, 2 / (d_model + d_v))
+        nn.init.normal_(self.WV, 0, sigma_v)
 
         self.WO = Linear(d_model, num_heads * d_v).W
-        nn.init.normal_(self.WO, 0, 2 / (d_model + d_v))
+        nn.init.normal_(self.WO, 0, sigma_v)
 
         self.use_rope = use_rope
         if use_rope:
             self.rope = ROPE(theta, d_k, max_seq_len)
-
+ 
     def forward_suboptimal(self, x: Float[Tensor, "... seq_len d_model"], WQ, WK, WV, WO) -> torch.Tensor:
         # too many matrix multiplications here, move on
 
@@ -264,14 +269,38 @@ class MultiHeadAttention(nn.Module):
         Q, K, V = QKV.chunk(3, dim=-1)  # each is now [... h s d]
 
         if self.use_rope:
-            Q = self.rope.forward(Q, token_positions)
-            K = self.rope.forward(K, token_positions)
+            Q = self.rope.forward(Q, positions=token_positions)
+            K = self.rope.forward(K, positions=token_positions)
 
         seq_len = x.shape[-2]
-        mask = rearrange(torch.tril(torch.ones(seq_len, seq_len)).bool(), "s1 s2 -> 1 1 s1 s2") # causal mask
+        mask = rearrange(torch.tril(torch.ones(seq_len, seq_len)).bool(), "s1 s2 -> 1 1 s1 s2")  # causal mask
         attention = sdpa(Q, K, V, mask=mask)  # batch, num_heads, seq_len, d_k
         attention = rearrange(attention, "b h s d -> b s (h d)")  # this is the concatenation
 
         # oof, this was hard
 
         return attention @ self.WO.T
+
+
+class TransformerBlock(nn.Module):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, max_seq_len: int,
+    theta: float,):
+        super().__init__()
+        self.norm1 = RMSNorm(d_model)
+        self.mha = MultiHeadAttention(d_model, num_heads, max_seq_len=max_seq_len, theta=theta, use_rope=True)
+        self.norm2 = RMSNorm(d_model)
+        self.swiglu = FFN_SwiGLU(d_model, d_ff)
+
+    def forward(self, x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
+        x_res = x
+        x = self.norm1.forward(x)
+        x = self.mha.forward(x)
+        x = x_res + x
+
+        x_res = x
+        x = self.norm2.forward(x)
+        x = self.swiglu.forward(x)
+
+        return x_res + x
+
+
