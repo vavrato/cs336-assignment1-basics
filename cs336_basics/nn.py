@@ -172,8 +172,8 @@ class ROPE(nn.Module):
 
         if positions is None:
             positions = torch.arange(x.shape[-2])
-        cos = getattr(self, "cos")[positions, :]#.unsqueeze(1)  # unsqueeze when x.shape = [b, s, h, d]
-        sin = getattr(self, "sin")[positions, :]#.unsqueeze(1)
+        cos = getattr(self, "cos")[positions, :]  # .unsqueeze(1)  # unsqueeze when x.shape = [b, s, h, d]
+        sin = getattr(self, "sin")[positions, :]  # .unsqueeze(1)
 
         return x * cos + y * sin
 
@@ -237,7 +237,7 @@ class MultiHeadAttention(nn.Module):
         self.use_rope = use_rope
         if use_rope:
             self.rope = ROPE(theta, d_k, max_seq_len)
- 
+
     def forward_suboptimal(self, x: Float[Tensor, "... seq_len d_model"], WQ, WK, WV, WO) -> torch.Tensor:
         # too many matrix multiplications here, move on
 
@@ -283,8 +283,14 @@ class MultiHeadAttention(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, max_seq_len: int,
-    theta: float,):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        max_seq_len: int,
+        theta: float,
+    ):
         super().__init__()
         self.norm1 = RMSNorm(d_model)
         self.mha = MultiHeadAttention(d_model, num_heads, max_seq_len=max_seq_len, theta=theta, use_rope=True)
@@ -304,3 +310,31 @@ class TransformerBlock(nn.Module):
         return x_res + x
 
 
+class Transformer(nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        context_length: int,
+        num_layers: int,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        theta: float,
+    ):
+        super().__init__()
+        self.num_layers = num_layers
+        self.embedding = Embedding(vocab_size, d_model)
+        self.blocks = nn.Sequential(
+            *[TransformerBlock(d_model, num_heads, d_ff, context_length, theta) for _ in range(num_layers)]
+        )
+        self.norm = RMSNorm(d_model)
+        self.linear = Linear(d_model, vocab_size)
+        
+
+    def forward(self, x):
+        x = self.embedding(x)
+        x = self.blocks(x)
+        x = self.norm(x)
+        x = self.linear(x)
+        
+        return x    

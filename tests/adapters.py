@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, softmax
 
 from cs336_basics.naive_tokenizer import MyTokenizer, Tokenizer
-from cs336_basics.nn import ROPE, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, TransformerBlock, sdpa, silu, ffn_swiglu
+from cs336_basics.nn import ROPE, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, Transformer, TransformerBlock, sdpa, silu, ffn_swiglu
 
 
 
@@ -391,7 +391,35 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    transformer = Transformer(vocab_size, context_length, num_layers, d_model, num_heads, d_ff, rope_theta)
+    state_dict = {}
+    for i in range(num_layers):
+        state_dict.update(
+            {
+                f'blocks.{i}.mha.WQ': weights[f'layers.{i}.attn.q_proj.weight'],
+                f'blocks.{i}.mha.WK': weights[f'layers.{i}.attn.k_proj.weight'],
+                f'blocks.{i}.mha.WV':weights[f'layers.{i}.attn.v_proj.weight'],
+                f'blocks.{i}.mha.WO':weights[f'layers.{i}.attn.output_proj.weight'],
+                f'blocks.{i}.norm1.W': weights[f'layers.{i}.ln1.weight'],
+                f'blocks.{i}.norm2.W': weights[f'layers.{i}.ln2.weight'],
+                f'blocks.{i}.swiglu.W1': weights[f'layers.{i}.ffn.w1.weight'],
+                f'blocks.{i}.swiglu.W2': weights[f'layers.{i}.ffn.w2.weight'],
+                f'blocks.{i}.swiglu.W3': weights[f'layers.{i}.ffn.w3.weight']
+            }
+        )
+    
+    state_dict.update(
+        {
+            'embedding.W': weights['token_embeddings.weight'],
+            'norm.W': weights['ln_final.weight'],
+            'linear.W': weights['lm_head.weight']
+
+        }
+    )
+
+    transformer.load_state_dict(state_dict)
+
+    return transformer.forward(in_indices)
 
 
 def run_rmsnorm(
