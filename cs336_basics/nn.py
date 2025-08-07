@@ -41,7 +41,7 @@ class Embedding(nn.Module):
         W = nn.init.trunc_normal_(W, 0, 1, a=-3, b=3)
         self.W = nn.Parameter(W)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Int[Tensor, '... vocab_size']) -> torch.Tensor:
         return (self.W)[x]
 
 
@@ -172,8 +172,8 @@ class ROPE(nn.Module):
 
         if positions is None:
             positions = torch.arange(x.shape[-2])
-        cos = getattr(self, "cos")[positions, :]  # .unsqueeze(1)  # unsqueeze when x.shape = [b, s, h, d]
-        sin = getattr(self, "sin")[positions, :]  # .unsqueeze(1)
+        cos = getattr(self, "cos")[positions, :]
+        sin = getattr(self, "sin")[positions, :]
 
         return x * cos + y * sin
 
@@ -221,7 +221,7 @@ class MultiHeadAttention(nn.Module):
 
         sigma_qk = math.sqrt(2 / (d_model + d_k))
         sigma_v = math.sqrt(2 / (d_model + d_v))
-        # I think this should be the correct init
+        # I think this should be the correct init. The variance corresponds to the matrix corresponding to one head only. Here they are concated for efficiency
         self.WQ = Linear(d_k * num_heads, d_model).W
         nn.init.normal_(self.WQ, 0, sigma_qk)
 
@@ -237,26 +237,6 @@ class MultiHeadAttention(nn.Module):
         self.use_rope = use_rope
         if use_rope:
             self.rope = ROPE(theta, d_k, max_seq_len)
-
-    def forward_suboptimal(self, x: Float[Tensor, "... seq_len d_model"], WQ, WK, WV, WO) -> torch.Tensor:
-        # too many matrix multiplications here, move on
-
-        Q = x @ WQ.T  # this is batch, seq_len, n_heads * d_k
-        K = x @ WK.T
-        V = x @ WV.T
-
-        Q = rearrange(Q, "... seq_len (num_heads d_k) -> ... num_heads seq_len d_k", num_heads=self.num_heads)
-        K = rearrange(K, "... seq_len (num_heads d_k) -> ... num_heads seq_len d_k", num_heads=self.num_heads)
-        V = rearrange(V, "... seq_len (num_heads d_k) -> ... num_heads seq_len d_k", num_heads=self.num_heads)
-
-        seq_len = x.shape[-2]
-
-        mask = rearrange(torch.tril(torch.ones(seq_len, seq_len)).bool(), "s1 s2 -> 1 1 s1 s2")
-        attention = sdpa(Q, K, V, mask=mask)  # batch, num_heads, seq_len, d_k
-
-        attention = rearrange(attention, "b h s d -> b s (h d)")  # this is the concatenation
-
-        return attention @ WO.T
 
     def forward(self, x: Float[Tensor, "... seq_len d_model"], token_positions=None) -> torch.Tensor:
         # this does just one matrix multiplication
@@ -329,12 +309,18 @@ class Transformer(nn.Module):
         )
         self.norm = RMSNorm(d_model)
         self.linear = Linear(d_model, vocab_size)
-        
 
     def forward(self, x):
         x = self.embedding(x)
         x = self.blocks(x)
         x = self.norm(x)
         x = self.linear(x)
-        
-        return x    
+
+        return x
+
+def cross_entropy(logits: Float[Tensor, "b vocab_size"], targets: Int[Tensor, "b"]) -> Float[Tensor, ""]:
+    first = logits[torch.arange(targets.shape[0]), targets]
+    maxes_ = torch.max(logits, dim=-1, keepdim=True).values
+    exps_ = torch.exp(logits - maxes_)
+    second = torch.log(torch.sum(exps_, dim=-1, keepdim=True)) + maxes_  # or we can do keepdim=False with maxes_.squeeze()
+    return -(first-second).mean()
