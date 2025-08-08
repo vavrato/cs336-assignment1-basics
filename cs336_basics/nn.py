@@ -369,3 +369,18 @@ def cosine_annealing(t:int, lr_max: float, lr_min: float, T_w: int, T_c: int) ->
     if t<=T_c:
         return lr_min + 1/2*(1+math.cos((t-T_w)/(T_w-T_c) * math.pi))*(lr_max-lr_min)
     return lr_min
+
+def gradient_clipping(params, M:float):
+    norm=torch.tensor(0.)
+    for p in params:
+        if p.grad is None:
+            continue
+        norm += torch.sum(torch.square(p.grad.data))
+
+    norm = torch.sqrt(norm)
+
+    if norm > M:
+        scale = M/(norm+1e-6)
+        for p in params:
+            if p.grad is not None:
+                p.grad.data.mul_(scale)

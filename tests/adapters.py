@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, softmax
 
 from cs336_basics.naive_tokenizer import MyTokenizer, Tokenizer
-from cs336_basics.nn import ROPE, AdamW, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, Transformer, TransformerBlock, cosine_annealing, cross_entropy, sdpa, silu, ffn_swiglu
+from cs336_basics.nn import ROPE, AdamW, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, Transformer, TransformerBlock, cosine_annealing, cross_entropy, gradient_clipping, sdpa, silu, ffn_swiglu
 
 
 
@@ -525,7 +525,7 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    return gradient_clipping(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> type[torch.optim.Optimizer]:
