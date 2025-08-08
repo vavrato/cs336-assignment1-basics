@@ -324,3 +324,41 @@ def cross_entropy(logits: Float[Tensor, "b vocab_size"], targets: Int[Tensor, "b
     exps_ = torch.exp(logits - maxes_)
     second = torch.log(torch.sum(exps_, dim=-1, keepdim=True)) + maxes_  # or we can do keepdim=False with maxes_.squeeze()
     return -(first-second).mean()
+
+class AdamW(torch.optim.Optimizer):
+    # I'm starting being lazy with the type hints
+    def __init__(self, params, lr=0.001, weight_decay=0.01, betas=(0.9,0.999), eps=1e-8):
+        defaults = {'lr': lr, 'weight_decay': weight_decay, 'betas': betas, 'eps': eps}
+        super().__init__(params, defaults)
+
+    def step(self, closure = None):
+        loss = None if closure is None else closure()
+        for group in self.param_groups:
+            lr = group["lr"]
+            weight_decay = group["weight_decay"]
+            beta1, beta2 = group["betas"]
+            eps = group["eps"]
+
+
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+
+                grad = p.grad.data
+                state = self.state[p]
+                state['m'] = beta1 * state.get("m",torch.zeros_like(p)) + (1-beta1)*grad
+                state['v'] = beta2 * state.get("v",torch.zeros_like(p)) + (1-beta2)*(grad**2)
+
+                m = state['m']
+                v = state['v']
+                t = state.get("t", 1)
+
+                lr_t = lr*math.sqrt(1-beta2**t)/(1-beta1**t)
+
+                p.data -= lr_t*m/(torch.sqrt(v) + eps)
+                p.data *= (1-lr*weight_decay)
+
+                state['t'] = t+1 
+
+
+        return loss

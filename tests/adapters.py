@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, softmax
 
 from cs336_basics.naive_tokenizer import MyTokenizer, Tokenizer
-from cs336_basics.nn import ROPE, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, Transformer, TransformerBlock, cross_entropy, sdpa, silu, ffn_swiglu
+from cs336_basics.nn import ROPE, AdamW, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, Transformer, TransformerBlock, cross_entropy, sdpa, silu, ffn_swiglu
 
 
 
@@ -532,7 +532,7 @@ def get_adamw_cls() -> type[torch.optim.Optimizer]:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
