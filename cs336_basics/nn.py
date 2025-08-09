@@ -1,4 +1,6 @@
+import random
 from typing import Optional
+import numpy as np
 from torch import nn, Tensor
 import torch
 import math
@@ -41,7 +43,7 @@ class Embedding(nn.Module):
         W = nn.init.trunc_normal_(W, 0, 1, a=-3, b=3)
         self.W = nn.Parameter(W)
 
-    def forward(self, x: Int[Tensor, '... vocab_size']) -> torch.Tensor:
+    def forward(self, x: Int[Tensor, "... vocab_size"]) -> torch.Tensor:
         return (self.W)[x]
 
 
@@ -318,20 +320,24 @@ class Transformer(nn.Module):
 
         return x
 
+
 def cross_entropy(logits: Float[Tensor, "b vocab_size"], targets: Int[Tensor, "b"]) -> Float[Tensor, ""]:
     first = logits[torch.arange(targets.shape[0]), targets]
     maxes_ = torch.max(logits, dim=-1, keepdim=True).values
     exps_ = torch.exp(logits - maxes_)
-    second = torch.log(torch.sum(exps_, dim=-1, keepdim=True)) + maxes_  # or we can do keepdim=False with maxes_.squeeze()
-    return -(first-second).mean()
+    second = (
+        torch.log(torch.sum(exps_, dim=-1, keepdim=True)) + maxes_
+    )  # or we can do keepdim=False with maxes_.squeeze()
+    return -(first - second).mean()
+
 
 class AdamW(torch.optim.Optimizer):
     # I'm starting being lazy with the type hints
-    def __init__(self, params, lr=0.001, weight_decay=0.01, betas=(0.9,0.999), eps=1e-8):
-        defaults = {'lr': lr, 'weight_decay': weight_decay, 'betas': betas, 'eps': eps}
+    def __init__(self, params, lr=0.001, weight_decay=0.01, betas=(0.9, 0.999), eps=1e-8):
+        defaults = {"lr": lr, "weight_decay": weight_decay, "betas": betas, "eps": eps}
         super().__init__(params, defaults)
 
-    def step(self, closure = None):
+    def step(self, closure=None):
         loss = None if closure is None else closure()
         for group in self.param_groups:
             lr = group["lr"]
@@ -339,39 +345,39 @@ class AdamW(torch.optim.Optimizer):
             beta1, beta2 = group["betas"]
             eps = group["eps"]
 
-
             for p in group["params"]:
                 if p.grad is None:
                     continue
 
                 grad = p.grad.data
                 state = self.state[p]
-                state['m'] = beta1 * state.get("m",torch.zeros_like(p)) + (1-beta1)*grad
-                state['v'] = beta2 * state.get("v",torch.zeros_like(p)) + (1-beta2)*(grad**2)
+                state["m"] = beta1 * state.get("m", torch.zeros_like(p)) + (1 - beta1) * grad
+                state["v"] = beta2 * state.get("v", torch.zeros_like(p)) + (1 - beta2) * (grad**2)
 
-                m = state['m']
-                v = state['v']
+                m = state["m"]
+                v = state["v"]
                 t = state.get("t", 1)
 
-                lr_t = lr*math.sqrt(1-beta2**t)/(1-beta1**t)
+                lr_t = lr * math.sqrt(1 - beta2**t) / (1 - beta1**t)
 
-                p.data -= lr_t*m/(torch.sqrt(v) + eps)
-                p.data *= (1-lr*weight_decay)
+                p.data -= lr_t * m / (torch.sqrt(v) + eps)
+                p.data *= 1 - lr * weight_decay
 
-                state['t'] = t+1 
-
+                state["t"] = t + 1
 
         return loss
-    
-def cosine_annealing(t:int, lr_max: float, lr_min: float, T_w: int, T_c: int) -> float:
-    if t<=T_w:
-        return lr_max*t/T_w
-    if t<=T_c:
-        return lr_min + 1/2*(1+math.cos((t-T_w)/(T_w-T_c) * math.pi))*(lr_max-lr_min)
+
+
+def cosine_annealing(t: int, lr_max: float, lr_min: float, T_w: int, T_c: int) -> float:
+    if t <= T_w:
+        return lr_max * t / T_w
+    if t <= T_c:
+        return lr_min + 1 / 2 * (1 + math.cos((t - T_w) / (T_w - T_c) * math.pi)) * (lr_max - lr_min)
     return lr_min
 
-def gradient_clipping(params, M:float):
-    norm=torch.tensor(0.)
+
+def gradient_clipping(params, M: float):
+    norm = torch.tensor(0.0)
     for p in params:
         if p.grad is None:
             continue
@@ -380,7 +386,20 @@ def gradient_clipping(params, M:float):
     norm = torch.sqrt(norm)
 
     if norm > M:
-        scale = M/(norm+1e-6)
+        scale = M / (norm + 1e-6)
         for p in params:
             if p.grad is not None:
                 p.grad.data.mul_(scale)
+
+
+def data_loader(
+    dataset: np.ndarray, batch_size: int, context_length: int, device: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+    rows = []
+    for _ in range(batch_size):
+        i = random.randint(0, len(dataset) - context_length - 1)
+        rows.append(dataset[i : i + context_length + 1])
+    tensors = torch.from_numpy(np.stack(rows)).to(
+        dtype=torch.int64, device=device
+    )  # from_numpy avoids copying, numpy and torch matrix share the same space. Then we copy to the device
+    return (tensors[:, :-1], tensors[:, 1:])

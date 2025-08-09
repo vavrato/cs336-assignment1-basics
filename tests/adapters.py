@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, softmax
 
 from cs336_basics.naive_tokenizer import MyTokenizer, Tokenizer
-from cs336_basics.nn import ROPE, AdamW, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, Transformer, TransformerBlock, cosine_annealing, cross_entropy, gradient_clipping, sdpa, silu, ffn_swiglu
+from cs336_basics.nn import ROPE, AdamW, Embedding, FFN_SwiGLU, Linear, MultiHeadAttention, RMSNorm, Silu, Transformer, TransformerBlock, cosine_annealing, cross_entropy, data_loader, gradient_clipping, sdpa, silu, ffn_swiglu
 
 
 
@@ -481,7 +481,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return data_loader(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
