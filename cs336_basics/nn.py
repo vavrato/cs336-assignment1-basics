@@ -395,11 +395,9 @@ def gradient_clipping(params, M: float):
 def data_loader(
     dataset: np.ndarray, batch_size: int, context_length: int, device: str
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    rows = []
-    for _ in range(batch_size):
-        i = random.randint(0, len(dataset) - context_length - 1)
-        rows.append(dataset[i : i + context_length + 1])
-    tensors = torch.from_numpy(np.stack(rows)).to(
-        dtype=torch.int64, device=device
-    )  # from_numpy avoids copying, numpy and torch matrix share the same space. Then we copy to the device
-    return (tensors[:, :-1], tensors[:, 1:])
+    indices = np.random.randint(0, len(dataset) - context_length, size=batch_size)
+    indices = indices.reshape(-1, 1) + np.arange(context_length+1)
+
+    t = torch.from_numpy(dataset[indices]).to(dtype=torch.int64, device=device)
+
+    return (t[:, :-1], t[:, 1:])
